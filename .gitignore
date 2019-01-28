@@ -1,0 +1,4 @@
+.*.sw[o,p]
+node_modules/
+build/
+package-lock.json
