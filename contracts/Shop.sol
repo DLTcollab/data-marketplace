@@ -37,8 +37,8 @@ contract Shop is Ownable {
       _;
     }
 
-    event Purchase(address buyer, string mamRoot);
-    event Subscribe(address buyer, uint256 time);
+    event Purchase(bytes32 indexed scriptHash, address indexed buyer, string mamRoot);
+    event Subscribe(address indexed buyer, uint256 expirationTime);
     event DataUpdate(string mamRoot);
   
     constructor (address owner) public {
@@ -60,29 +60,65 @@ contract Shop is Ownable {
         return (dataList[idx].mamRoot, dataList[idx].time);
     }
 
-    function buy(address buyer, string memory mamRoot, uint256 pay) supervised public {
-        require(pay == singlePurchacePrice);
-        emit Purchase(buyer, mamRoot);
+    function purchase(
+        address buyer, 
+        string memory mamRoot, 
+        uint256 amount,
+        bytes32 scriptHash
+    ) 
+        supervised 
+        public 
+    {
+        require(amount == singlePurchacePrice);
+        emit Purchase(scriptHash, buyer, mamRoot);
     }
     
-    function subscribe(address buyer, uint256 time, uint256 pay) supervised public {
-      uint256 totalPayAmount = subscribePerTimePrice.mul(time);
-      uint256 totalTime = timeUnit.mul(time);
-      require(pay == totalPayAmount);
+    function subscribe(
+        address buyer, 
+        uint256 timeInHours, 
+        uint256 amount
+    ) 
+        supervised 
+        public 
+    {
+      uint256 totalPayAmount = subscribePerTimePrice.mul(timeInHours);
+      uint256 totalTime = timeInHours.mul(3600);
+      require(amount == totalPayAmount);
 
-      subscribedUserList[buyer] = now;
+      subscribedUserList[buyer] = block.timestamp;
       subscribedUserList[buyer] = subscribedUserList[buyer].add(totalTime);
       
-      emit Subscribe(buyer, time);
+      emit Subscribe(buyer, subscribedUserList[buyer]);
     }
 
-    function getSubscribedData(address buyer, string memory mamRoot) subscribed subscriptionValid public {
-      emit Purchase(buyer, mamRoot);
+    function getSubscribedData(string memory mamRoot) 
+        subscribed 
+        subscriptionValid 
+        public 
+    {
+      emit Purchase(0, msg.sender, mamRoot);
     }
 
     
-    function txFinished(address buyer, bytes32 txHash) onlyOwner public {
-        Marketplace(supervisor).getReceipt(buyer, txHash); // here isn't using constructor
+    function txFinalize(
+        uint8[] memory sigV,
+        bytes32[] memory sigR,
+        bytes32[] memory sigS,
+        address buyer,
+        bytes32 scriptHash,
+        bytes32 txHash
+    ) 
+        onlyOwner 
+        public 
+    {
+        Marketplace(supervisor).fulfillPurchase(
+            sigV, 
+            sigR, 
+            sigS,
+            buyer,
+            scriptHash,
+            txHash
+        );
     }
 
     function kill() supervised public {
