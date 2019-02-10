@@ -1,10 +1,22 @@
-const web3 = require('web3')
+const Web3 = require('web3');
+const web3 = new Web3("ws://localhost:8545");
 const Marketplace = artifacts.require('Marketplace')
 const Shop = artifacts.require('Shop')
+const sellerUuid1 = 'EICWPMAUVDMMARJKZYORXJPRLC'
+const sellerUuid2 = 'ZEVNAUWYUQQULOFHVGFLDJQOFZ'
+const buyerUuid = 'QMPNK9BOFK9REOHADHFYJIJZQ9'
+const mamRoot = 'DVZAPMBOOJHQKFQUUYCXKA9DMOLQABGKHSZCAPYLPQSQK9BGNGMOY9JHHNRRGNHGBUUPWYWJM9QNEISFI'
+const txHash = '0x1da44b586eb0729ff70a73c326926f6ed5a25f5b056e7f47fbc6e58d86871655'
+
+before(async () => {
+  require('truffle-test-utils').init()
+})
 
 contract('Marketplace', accounts => {
-  it('accounts[0] should be the owner', async () => {
-    let instance = await Marketplace.deployed()
+  let instance
+
+  it('Accounts[0] should be the owner', async () => {
+    instance = await Marketplace.deployed()
     let owner = await instance.owner()
     assert.equal(
       owner,
@@ -13,9 +25,9 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should add accounts[1] as a seller', async () => {
-    let instance = await Marketplace.deployed()
-    await instance.addSeller(accounts[1])
+  it('Should register accounts[1] as a seller', async () => {
+    await instance.registerUser(accounts[1], sellerUuid1)
+    await instance.registerShop(accounts[1])
     let shop_address = await instance.sellerData.call(accounts[1])
     assert.notEqual(
       shop_address,
@@ -24,9 +36,9 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should add accounts[2] as a seller', async () => {
-    let instance = await Marketplace.deployed()
-    await instance.addSeller(accounts[2])
+  it('Should register accounts[2] as a seller', async () => {
+    await instance.registerUser(accounts[2], sellerUuid2)
+    await instance.registerShop(accounts[2])
     let shop_address = await instance.sellerData.call(accounts[2])
     assert.notEqual(
       shop_address,
@@ -35,9 +47,8 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should delete accounts[1] from seller list', async () => {
-    let instance = await Marketplace.deployed()
-    await instance.rmSeller(accounts[1])
+  it('Should delete accounts[1] from seller list', async () => {
+    await instance.removeShop(accounts[1])
     let shop_address = await instance.sellerData.call(accounts[1])
     assert.equal(
       shop_address,
@@ -46,8 +57,7 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should get the first seller(accounts[2]) from seller list', async () => {
-    let instance = await Marketplace.deployed()
+  it('Should get the first seller(accounts[2]) from seller list', async () => {
     let address = await instance.allSellers.call("0x0000000000000000000000000000000000000000")
     assert.equal(
       address,
@@ -56,8 +66,7 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should get the first seller(accounts[2]) shop', async () => {
-    let instance = await Marketplace.deployed()
+  it('Should get the first seller(accounts[2]) shop', async () => {
     let address = await instance.allSellers.call("0x0000000000000000000000000000000000000000")
     let shop_address = await instance.sellerData.call(address)
     assert.notEqual(
@@ -69,8 +78,7 @@ contract('Marketplace', accounts => {
 
   let shop_instance
 
-  it('accounts[2] should be the owner of shop', async () => {
-    let instance = await Marketplace.deployed()
+  it('Accounts[2] should be the owner of shop', async () => {
     let address = await instance.allSellers.call("0x0000000000000000000000000000000000000000")
     let shop_address = await instance.sellerData.call(address)
     shop_instance = await Shop.at(shop_address)
@@ -82,7 +90,7 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should set the data price to 30wei', async () => {
+  it('Should set the data price to 30wei', async () => {
     await shop_instance.setPrice(30, {from: accounts[2]})
     let price = await shop_instance.singlePurchacePrice.call()
     assert.equal(
@@ -92,8 +100,7 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should push MAM metadata onto datalist', async () => {
-    let mamRoot = 'A'.repeat(81)
+  it('Should push MAM metadata onto datalist', async () => {
     await shop_instance.updateData(mamRoot, 12, {from: accounts[2]})
     let metadata = await shop_instance.getData(0)
     assert.notEqual(
@@ -103,22 +110,102 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('should register customer(accounts[3]) to a uuid', async () => {
-    let instance = await Marketplace.deployed()
-    let uuid = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    await instance.register(accounts[3], uuid)
+  it('Should register customer(accounts[3])', async () => {
+    await instance.registerUser(accounts[3], buyerUuid)
     assert.equal(
-      await instance.userid.call(accounts[3]),
-      uuid,
+      await instance.userAccounts.call(accounts[3]),
+      buyerUuid,
       'failed to register account'
     )
   })
 
-  it('customer interact with Marketplace contract to buy data', async () => {
-    let instance = await Marketplace.deployed()
-    let address = await instance.allSellers.call("0x0000000000000000000000000000000000000000")
-    let shop_address = await instance.sellerData.call(address)
-    let mamRoot = 'A'.repeat(81)
-    await instance.buyData(accounts[2], mamRoot, {from: accounts[3], value: web3.utils.toWei('30', 'wei')})
+  let buyDataResult
+
+  it('Customer interact with Marketplace contract to purchase data', async () => {
+    buyDataResult = await instance.buyData(accounts[2], mamRoot, {from: accounts[3], value: web3.utils.toWei('30', 'wei')})
+
+    assert.equal(
+      buyDataResult.logs[0].event,
+      'Funded',
+      'invalid event'
+    )
+
+    // truffle failed to log Purchase event, skip it for test
+    /*
+    assert.web3AllEvents(txResult, [
+      {
+        event: 'Purchase',
+        args: {
+          buyer: accounts[3],
+          mamRoot: mamRoot,
+        }
+      },
+      {
+        event: 'Funded',
+        args: {
+          from: accounts[3],
+          value: 30
+        }
+      }
+    ])
+    */
+  })
+
+  it('Seller finalize purchase', async () => {
+    let scriptHash = buyDataResult.logs[0].args.scriptHash
+    let value = buyDataResult.logs[0].args.value
+    let buyer = buyDataResult.logs[0].args.from
+
+    let hash = web3.utils.soliditySha3(
+      '0x19',
+      '0x00',
+      instance.address.toLowerCase(),
+      scriptHash,
+      accounts[2].toLowerCase(),
+      value
+    )
+    let sig = await web3.eth.sign(hash, accounts[2])
+    let r = sig.slice(0, 66)
+    let s = '0x' + sig.slice(66, 130)
+    let v = '0x' + sig.slice(130, 132)
+    v = web3.utils.toDecimal(v) + 27
+
+    let txResult = await shop_instance.txFinalize([v], [r], [s], buyer, scriptHash, txHash, {from: accounts[2]})
+
+    /*
+    assert.equal(
+      txResult.logs[0].event,
+      'Fulfilled',
+      'invalid event'
+    )
+    */
+  })
+
+  it('Buyer execute transaction to release fund', async () => {
+    let scriptHash = buyDataResult.logs[0].args.scriptHash
+    let value = buyDataResult.logs[0].args.value
+    let buyer = buyDataResult.logs[0].args.from
+
+    let hash = web3.utils.soliditySha3(
+      '0x19',
+      '0x00',
+      instance.address,
+      scriptHash,
+      accounts[2],
+      value
+    )
+    let sig = await web3.eth.sign(hash, accounts[3])
+    let r = sig.slice(0, 66)
+    let s = '0x' + sig.slice(66, 130)
+    let v = '0x' + sig.slice(130, 132)
+    v = web3.utils.toDecimal(v) + 27
+
+    let txResult = await instance.execute([v], [r], [s], scriptHash, accounts[2], value, {from: accounts[3]})
+
+    assert.equal(
+      txResult.logs[0].event,
+      'Executed',
+      'invalid event'
+    )
   })
 })
