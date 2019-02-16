@@ -1,20 +1,25 @@
 {
-  "name": "truffle_test",
+  "name": "data-marketplace",
+  "author": "HexRabbit",
   "version": "1.0.0",
-  "description": "",
-  "main": "truffle-config.js",
+  "description": "This is a decentralized data marketplace that allows data consumers to place bids on auctions for high-value sensor/IoT devices to compensate for invaluable data.",
+  "main": "truffle.js",
   "directories": {
     "test": "test"
   },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DLTcollab/data-marketplace"
   },
-  "author": "",
-  "license": "ISC",
+  "scripts": {
+    "compile": "truffle compile",
+    "test": "truffle test"
+  },
+  "license": "MIT",
   "dependencies": {
     "ganache-cli": "^6.3.0",
-    "openzeppelin-solidity": "^2.1.2",
+    "openzeppelin-solidity": "2.1.2",
     "truffle-test-utils": "^0.1.0",
-    "web3": "^1.0.0-beta.37"
+    "web3": "1.0.0-beta.37"
   }
 }
