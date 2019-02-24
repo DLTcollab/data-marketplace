@@ -15,9 +15,10 @@ contract Shop is Ownable {
     }
 
     address public supervisor;
-    uint256 public singlePurchacePrice = 30 wei;
+    uint256 public singlePurchasePrice = 30 wei;
     uint256 public subscribePerTimePrice = 100 wei;
     uint256 public timeUnit = 1 hours;
+    bool public openForPurchase = false;
 
     data[] public dataList;
     mapping (address => uint256) private subscribedUserList;
@@ -27,27 +28,53 @@ contract Shop is Ownable {
         _;
     }
 
-    modifier subscribed {
-        assert(subscribedUserList[msg.sender] != 0);
+    modifier subscribed(address account) {
+        assert(subscribedUserList[account] != 0);
         _;
     }
 
     modifier subscriptionValid {
-      assert(block.timestamp <= subscribedUserList[msg.sender]);
-      _;
+        assert(block.timestamp <= subscribedUserList[msg.sender]);
+        _;
     }
 
-    event Purchase(bytes32 indexed scriptHash, address indexed buyer, string mamRoot);
-    event Subscribe(address indexed buyer, uint256 expirationTime);
+    modifier isPurchasable {
+        require(openForPurchase == true);
+        _;
+    }
+
+    event Purchase(
+        bytes32 indexed scriptHash,
+        address indexed buyer, 
+        string mamRoot
+    );
+    event Subscribe(
+        address indexed buyer, 
+        uint256 expirationTime
+    );
     event DataUpdate(string mamRoot);
   
     constructor (address owner) public {
         transferOwnership(owner);
         supervisor = msg.sender;
     }
+
+    function setPurchaseOpen() 
+        onlyOwner 
+        external
+    {
+        openForPurchase = true;
+    }
+
+    function setPurchaseClose() 
+        onlyOwner 
+        external
+    {
+        openForPurchase = false;
+    }
     
     function setPrice(uint256 _price) onlyOwner public {
-        singlePurchacePrice = _price;
+        singlePurchasePrice = _price;
     }
     
     function updateData(string memory mamRoot, uint256 time) onlyOwner public {
@@ -67,9 +94,14 @@ contract Shop is Ownable {
         bytes32 scriptHash
     ) 
         supervised 
+        isPurchasable
         public 
     {
-        require(amount == singlePurchacePrice);
+        require(
+            amount == singlePurchasePrice, 
+            "Payment amount is not correct"
+        );
+
         emit Purchase(scriptHash, buyer, mamRoot);
     }
     
@@ -79,6 +111,7 @@ contract Shop is Ownable {
         uint256 amount
     ) 
         supervised 
+        isPurchasable
         public 
     {
       uint256 totalPayAmount = subscribePerTimePrice.mul(timeInHours);
@@ -91,14 +124,18 @@ contract Shop is Ownable {
       emit Subscribe(buyer, subscribedUserList[buyer]);
     }
 
-    function getSubscribedData(string memory mamRoot) 
-        subscribed 
+    function getSubscribedData(
+        address buyer,
+        string memory mamRoot,
+        bytes32 scriptHash
+    )
+        subscribed(buyer)
         subscriptionValid 
+        isPurchasable
         public 
     {
-      emit Purchase(0, msg.sender, mamRoot);
+      emit Purchase(scriptHash, buyer, mamRoot);
     }
-
     
     function txFinalize(
         uint8[] memory sigV,

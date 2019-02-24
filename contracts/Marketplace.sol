@@ -9,7 +9,7 @@ contract Marketplace is Ownable{
 
     using SafeMath for uint256;
 
-    enum Status {FUNDED, RELEASED, SUSPEND}
+    enum Status {FUNDED, FULFILLED, RELEASED, SUSPENDED}
 
     struct Transaction {
         uint256 value;
@@ -57,13 +57,17 @@ contract Marketplace is Ownable{
 
     modifier transactionExists(bytes32 scriptHash) {
         require(
-            transactions[scriptHash].value != 0, "Transaction does not exist"
+            transactions[scriptHash].value != 0, 
+            "Transaction does not exist"
         );
         _;
     }
 
     modifier transactionDoesNotExist(bytes32 scriptHash) {
-        require(transactions[scriptHash].value == 0, "Transaction exists");
+        require(
+            transactions[scriptHash].value == 0, 
+            "Transaction exists"
+        );
         _;
     }
 
@@ -71,6 +75,14 @@ contract Marketplace is Ownable{
         require(
             transactions[scriptHash].status == Status.FUNDED,
             "Transaction is not in FUNDED state"
+        );
+        _;
+    }
+
+    modifier inFulfilledState(bytes32 scriptHash) {
+        require(
+            transactions[scriptHash].status == Status.FULFILLED,
+            "Transaction is not in FULFILLED state"
         );
         _;
     }
@@ -154,29 +166,58 @@ contract Marketplace is Ownable{
     {
         uint32 timeoutHours = 48;
 
-
         bytes32 scriptHash = addTransaction(
             msg.sender,
             seller,
             owner(),
             timeoutHours,
-            mamRoot,
-            msg.value,
-            uniqueTxid
+            msg.value
         );
 
-        uniqueTxid++;
+        // imform seller
+        sellerData[seller].purchase(seller, mamRoot, msg.value, scriptHash);
+
         emit Funded(scriptHash, msg.sender, msg.value);
     }
 
     function subscribeShop(address seller, uint256 time) 
         hasRegistered(msg.sender) 
+        nonZeroAddress(seller)
         external 
         payable 
     {
+        uint32 timeoutHours = 48;
+        bytes32 scriptHash = addTransaction(
+            msg.sender,
+            seller,
+            owner(),
+            timeoutHours,
+            msg.value
+        );
 
         sellerData[seller].subscribe(msg.sender, time, msg.value);
+        transactions[scriptHash].status = Status.FULFILLED;
     }
+
+    function purchaseBySubscription(address seller, string calldata mamRoot)
+        hasRegistered(msg.sender) 
+        nonZeroAddress(seller)
+        external
+    {
+        uint32 timeoutHours = 48;
+        bytes32 scriptHash = addTransaction(
+            msg.sender,
+            seller,
+            owner(),
+            timeoutHours,
+            0
+        );
+
+        sellerData[seller].getSubscribedData(msg.sender, mamRoot, scriptHash);
+
+        emit Funded(scriptHash, msg.sender, 0);
+    }
+
 
     function listRemove(address addr) internal {
         address n = allSellers[address(0)];
@@ -229,6 +270,7 @@ contract Marketplace is Ownable{
             transactions[scriptHash].value
         );
 
+        transactions[scriptHash].status = Status.FULFILLED;
         transactions[scriptHash].txHash = txHash;
         transactions[scriptHash].lastModified = block.timestamp;
 
@@ -240,9 +282,7 @@ contract Marketplace is Ownable{
         address seller,
         address moderator,
         uint32 timeoutHours,
-        string memory mamRoot,
-        uint256 value,
-        uint256 uniqueId
+        uint256 value
     )
         nonZeroAddress(buyer)
         nonZeroAddress(seller)
@@ -252,7 +292,7 @@ contract Marketplace is Ownable{
         require(buyer != seller, "Buyer and seller are same");
 
         //value passed should be greater than 0
-        require(value > 0, "Value passed is 0");
+        //require(value > 0, "Value passed is 0");
 
         bytes32 scriptHash = calculateScriptHash(
             buyer,
@@ -260,13 +300,10 @@ contract Marketplace is Ownable{
             moderator,
             timeoutHours,
             value,
-            uniqueId
+            uniqueTxid
         );
 
         require(transactions[scriptHash].value == 0, "Transaction exist");
-
-        // imform seller
-        sellerData[seller].purchase(seller, mamRoot, value, scriptHash);
 
         transactions[scriptHash] = Transaction({
             buyer: buyer,
@@ -293,6 +330,8 @@ contract Marketplace is Ownable{
         userAccounts[buyer].transactions.push(scriptHash);
         userAccounts[seller].transactions.push(scriptHash);
 
+        uniqueTxid++;
+
         return scriptHash;
     }
 
@@ -306,7 +345,7 @@ contract Marketplace is Ownable{
         uint256 amount
     )
         transactionExists(scriptHash)
-        inFundedState(scriptHash)
+        inFulfilledState(scriptHash)
         nonZeroAddress(destination)
         // temporary workaround to solve 
         // TypeError: Data location must be "calldata" for parameter in external function, but "memory" was given.

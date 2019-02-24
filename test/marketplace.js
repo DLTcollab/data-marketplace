@@ -1,12 +1,18 @@
-const Web3 = require('web3');
-const web3 = new Web3("ws://localhost:8545");
 const Marketplace = artifacts.require('Marketplace')
 const Shop = artifacts.require('Shop')
+
+const Web3 = require('web3')
+const web3 = new Web3("ws://localhost:8545")
+
+const truffleAssert = require('truffle-assertions');
+const truffleEvent  = require('truffle-events');
+
 const sellerUuid1 = 'EICWPMAUVDMMARJKZYORXJPRLC'
 const sellerUuid2 = 'ZEVNAUWYUQQULOFHVGFLDJQOFZ'
 const buyerUuid = 'QMPNK9BOFK9REOHADHFYJIJZQ9'
 const mamRoot = 'DVZAPMBOOJHQKFQUUYCXKA9DMOLQABGKHSZCAPYLPQSQK9BGNGMOY9JHHNRRGNHGBUUPWYWJM9QNEISFI'
 const txHash = '0x1da44b586eb0729ff70a73c326926f6ed5a25f5b056e7f47fbc6e58d86871655'
+const singlePurchasePrice = 50
 
 before(async () => {
   require('truffle-test-utils').init()
@@ -90,17 +96,15 @@ contract('Marketplace', accounts => {
     )
   })
 
-  it('Should set the data price to 30wei', async () => {
-    await shop_instance.setPrice(30, {from: accounts[2]})
-    let price = await shop_instance.singlePurchacePrice.call()
+  it('Setup shop for customers', async () => {
+    await shop_instance.setPrice(singlePurchasePrice, {from: accounts[2]})
+    let price = await shop_instance.singlePurchasePrice.call()
     assert.equal(
       price,
-      30,
+      singlePurchasePrice,
       'the data price was not set'
     )
-  })
 
-  it('Should push MAM metadata onto datalist', async () => {
     await shop_instance.updateData(mamRoot, 12, {from: accounts[2]})
     let metadata = await shop_instance.getData(0)
     assert.notEqual(
@@ -108,6 +112,8 @@ contract('Marketplace', accounts => {
       0,
       'failed to push the data to shop'
     )
+
+    await shop_instance.setPurchaseOpen({from: accounts[2]})
   })
 
   it('Should register customer(accounts[3])', async () => {
@@ -122,12 +128,31 @@ contract('Marketplace', accounts => {
   let buyDataResult
 
   it('Customer interact with Marketplace contract to purchase data', async () => {
-    buyDataResult = await instance.buyData(accounts[2], mamRoot, {from: accounts[3], value: web3.utils.toWei('30', 'wei')})
+    let balance_before = web3.utils.toBN(await web3.eth.getBalance(accounts[3]))
+    buyDataResult = await instance.buyData(
+      accounts[2],
+      mamRoot,
+      {
+        from: accounts[3],
+        value: singlePurchasePrice.toString()
+      }
+    )
+    let balance_after = web3.utils.toBN(await web3.eth.getBalance(accounts[3]))
+    let gasUsed = web3.utils.toBN(buyDataResult.receipt.gasUsed)
+    let txHash = buyDataResult.receipt.transactionHash
+    let tx = await web3.eth.getTransaction(txHash)
+    let gasPrice = tx.gasPrice
 
     assert.equal(
       buyDataResult.logs[0].event,
       'Funded',
       'invalid event'
+    )
+
+    assert.equal(
+      balance_before.sub(balance_after).toString(),
+      gasUsed.mul(web3.utils.toBN(gasPrice)).add(web3.utils.toBN(singlePurchasePrice)).toString(),
+      'Payment failure'
     )
 
     // truffle failed to log Purchase event, skip it for test
@@ -200,12 +225,20 @@ contract('Marketplace', accounts => {
     let v = '0x' + sig.slice(130, 132)
     v = web3.utils.toDecimal(v) + 27
 
+    let balance_before = web3.utils.toBN(await web3.eth.getBalance(accounts[2]))
     let txResult = await instance.execute([v], [r], [s], scriptHash, accounts[2], value, {from: accounts[3]})
+    let balance_after = web3.utils.toBN(await web3.eth.getBalance(accounts[2]))
 
     assert.equal(
       txResult.logs[0].event,
       'Executed',
       'invalid event'
+    )
+
+    assert.equal(
+      balance_after.sub(balance_before).toString(),
+      value.toString(),
+      "Value transfer failed"
     )
   })
 })
