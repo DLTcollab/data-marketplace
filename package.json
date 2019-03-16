@@ -17,8 +17,11 @@
   },
   "license": "MIT",
   "dependencies": {
+    "abi-decoder": "^1.2.0",
     "ganache-cli": "^6.3.0",
     "openzeppelin-solidity": "2.1.2",
+    "truffle-assertions": "^0.8.0",
+    "truffle-events": "0.0.7",
     "truffle-test-utils": "^0.1.0",
     "web3": "1.0.0-beta.37"
   }
