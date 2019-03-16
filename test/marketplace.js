@@ -11,8 +11,13 @@ const sellerUuid1 = 'EICWPMAUVDMMARJKZYORXJPRLC'
 const sellerUuid2 = 'ZEVNAUWYUQQULOFHVGFLDJQOFZ'
 const buyerUuid = 'QMPNK9BOFK9REOHADHFYJIJZQ9'
 const mamRoot = 'DVZAPMBOOJHQKFQUUYCXKA9DMOLQABGKHSZCAPYLPQSQK9BGNGMOY9JHHNRRGNHGBUUPWYWJM9QNEISFI'
+const mamRoot2 = 'PRMLL9QRDZAYUBFDIZHLHSER99OCFZLBPHHSOZMALTWDCCZUFKQFQMQDDVYLQTRPHKLFSUPWMECMIETIU'
 const txHash = '0x1da44b586eb0729ff70a73c326926f6ed5a25f5b056e7f47fbc6e58d86871655'
 const singlePurchasePrice = 50
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 before(async () => {
   require('truffle-test-utils').init()
@@ -33,10 +38,10 @@ contract('Marketplace', accounts => {
 
   it('Should register accounts[1] as a seller', async () => {
     await instance.registerUser(accounts[1], sellerUuid1)
-    await instance.registerShop(accounts[1])
-    let shop_address = await instance.sellerData.call(accounts[1])
+    await instance.registerShop(accounts[1], 'some info')
+    let shopInfo = await instance.sellerData.call(accounts[1])
     assert.notEqual(
-      shop_address,
+      shopInfo.instance,
       0,
       'the seller was not added'
     )
@@ -44,10 +49,10 @@ contract('Marketplace', accounts => {
 
   it('Should register accounts[2] as a seller', async () => {
     await instance.registerUser(accounts[2], sellerUuid2)
-    await instance.registerShop(accounts[2])
-    let shop_address = await instance.sellerData.call(accounts[2])
+    await instance.registerShop(accounts[2], 'some info')
+    let shopInfo = await instance.sellerData.call(accounts[2])
     assert.notEqual(
-      shop_address,
+      shopInfo.instance,
       0,
       'the seller was not added'
     )
@@ -55,9 +60,9 @@ contract('Marketplace', accounts => {
 
   it('Should delete accounts[1] from seller list', async () => {
     await instance.removeShop(accounts[1])
-    let shop_address = await instance.sellerData.call(accounts[1])
+    let shopInfo = await instance.sellerData.call(accounts[1])
     assert.equal(
-      shop_address,
+      shopInfo.instance,
       0,
       'the seller was not deleted'
     )
@@ -74,9 +79,9 @@ contract('Marketplace', accounts => {
 
   it('Should get the first seller(accounts[2]) shop', async () => {
     let address = await instance.allSellers.call("0x0000000000000000000000000000000000000000")
-    let shop_address = await instance.sellerData.call(address)
+    let shop_info = await instance.sellerData.call(address)
     assert.notEqual(
-      shop_address,
+      shop_info.instance,
       0,
       'the shop was not found'
     )
@@ -86,8 +91,8 @@ contract('Marketplace', accounts => {
 
   it('Accounts[2] should be the owner of shop', async () => {
     let address = await instance.allSellers.call("0x0000000000000000000000000000000000000000")
-    let shop_address = await instance.sellerData.call(address)
-    shop_instance = await Shop.at(shop_address)
+    let shop_info = await instance.sellerData.call(address)
+    shop_instance = await Shop.at(shop_info.instance)
     let owner = await shop_instance.owner()
     assert.equal(
       owner,
@@ -105,10 +110,26 @@ contract('Marketplace', accounts => {
       'the data price was not set'
     )
 
-    await shop_instance.updateData(mamRoot, 12, {from: accounts[2]})
-    let metadata = await shop_instance.getData(0)
+    var metadata = {
+      "device_id": "8CE7A927",
+      "app": "PM25",
+      "FAKE_GPS": "1",
+      "ver_format": "3",
+      "gps_lon": "23.003561",
+      "gps_lat": "120.216800",
+      "ver_app": "live",
+      "timestamp": Date.now()
+    }
+
+    await shop_instance.updateData(
+      mamRoot,
+      JSON.stringify(metadata),
+      { from: accounts[2] }
+    )
+
+    let data = await shop_instance.getData(0)
     assert.notEqual(
-      metadata,
+      data,
       0,
       'failed to push the data to shop'
     )
@@ -125,11 +146,11 @@ contract('Marketplace', accounts => {
     )
   })
 
-  let buyDataResult
+  let purchaseResult
 
   it('Customer interact with Marketplace contract to purchase data', async () => {
     let balance_before = web3.utils.toBN(await web3.eth.getBalance(accounts[3]))
-    buyDataResult = await instance.buyData(
+    purchaseResult = await instance.purchaseData(
       accounts[2],
       mamRoot,
       {
@@ -138,13 +159,13 @@ contract('Marketplace', accounts => {
       }
     )
     let balance_after = web3.utils.toBN(await web3.eth.getBalance(accounts[3]))
-    let gasUsed = web3.utils.toBN(buyDataResult.receipt.gasUsed)
-    let txHash = buyDataResult.receipt.transactionHash
+    let gasUsed = web3.utils.toBN(purchaseResult.receipt.gasUsed)
+    let txHash = purchaseResult.receipt.transactionHash
     let tx = await web3.eth.getTransaction(txHash)
     let gasPrice = tx.gasPrice
 
     assert.equal(
-      buyDataResult.logs[0].event,
+      purchaseResult.logs[0].event,
       'Funded',
       'invalid event'
     )
@@ -177,9 +198,9 @@ contract('Marketplace', accounts => {
   })
 
   it('Seller finalize purchase', async () => {
-    let scriptHash = buyDataResult.logs[0].args.scriptHash
-    let value = buyDataResult.logs[0].args.value
-    let buyer = buyDataResult.logs[0].args.from
+    let scriptHash = purchaseResult.logs[0].args.scriptHash
+    let value = purchaseResult.logs[0].args.value
+    let buyer = purchaseResult.logs[0].args.from
 
     let hash = web3.utils.soliditySha3(
       '0x19',
@@ -207,9 +228,9 @@ contract('Marketplace', accounts => {
   })
 
   it('Buyer execute transaction to release fund', async () => {
-    let scriptHash = buyDataResult.logs[0].args.scriptHash
-    let value = buyDataResult.logs[0].args.value
-    let buyer = buyDataResult.logs[0].args.from
+    let scriptHash = purchaseResult.logs[0].args.scriptHash
+    let value = purchaseResult.logs[0].args.value
+    let buyer = purchaseResult.logs[0].args.from
 
     let hash = web3.utils.soliditySha3(
       '0x19',
@@ -239,6 +260,55 @@ contract('Marketplace', accounts => {
       balance_after.sub(balance_before).toString(),
       value.toString(),
       "Value transfer failed"
+    )
+  })
+
+  it('Customer interact with Marketplace contract to subscribe', async () => {
+    let totalPayment = (await shop_instance.subscribePerTimePrice()) * 24
+    let receipt = await instance.subscribeShop(
+      accounts[2],
+      24,
+      {
+        from: accounts[3],
+        value: totalPayment.toString()
+      }
+    )
+  })
+
+  it('Invalid subscription should be blocked', async () => {
+
+    await truffleAssert.reverts(
+      instance.purchaseBySubscription(
+        accounts[2],
+        mamRoot,
+        { from: accounts[1] }
+      ),
+      'Subscription invalid'
+    )
+  })
+
+  it('Receive data by using valid subscription', async () => {
+    var metadata = {
+      "device_id": "8CE7A927",
+      "app": "PM25",
+      "FAKE_GPS": "1",
+      "ver_format": "3",
+      "gps_lon": "23.003561",
+      "gps_lat": "120.216800",
+      "ver_app": "live",
+      "timestamp": Date.now()
+    }
+
+    await shop_instance.updateData(
+      mamRoot2,
+      JSON.stringify(metadata),
+      { from: accounts[2] }
+    )
+
+    await instance.purchaseBySubscription(
+      accounts[2],
+      mamRoot2,
+      { from: accounts[3] }
     )
   })
 })

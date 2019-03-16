@@ -14,13 +14,13 @@ contract Marketplace is Ownable{
     struct Transaction {
         uint256 value;
         uint256 lastModified; // time txn was last modified (in seconds)
-        Status status;
-        uint32 timeoutHours;
+        Status  status;
+        uint32  timeoutHours;
         address buyer;
         address seller;
         address moderator;
-        mapping(address => bool) isOwner; // to keep track of owners.
-        mapping(address => bool) voted; // to keep track of who all voted
+        mapping (address => bool) isOwner; // to keep track of owners.
+        mapping (address => bool) voted; // to keep track of who all voted
         bytes32 txHash;
     }
 
@@ -29,9 +29,15 @@ contract Marketplace is Ownable{
         bytes32[] transactions;
     }
 
-    mapping (address => address) public allSellers; // traversing from 0x0
-    mapping (address => Shop) public sellerData;
-    mapping (address => Account) public userAccounts;
+    struct Info {
+        address seller;
+        Shop instance;
+        string info;
+    }
+
+    mapping (address => address)     public allSellers; // traversing from 0x0
+    mapping (address => Info)        public sellerData;
+    mapping (address => Account)     public userAccounts;
     mapping (bytes32 => Transaction) public transactions;
 
     uint256 uniqueTxid;
@@ -89,7 +95,7 @@ contract Marketplace is Ownable{
 
     modifier shopExists(address shopHolder) {
         require(
-            address(sellerData[shopHolder]) != address(0),
+            address(sellerData[shopHolder].instance) != address(0),
             "Shop does not exist"
         );
         _;
@@ -97,7 +103,7 @@ contract Marketplace is Ownable{
         
     modifier shopDoesNotExist(address shopHolder) {
         require(
-            address(sellerData[shopHolder]) == address(0),
+            address(sellerData[shopHolder].instance) == address(0),
             "Shop exists"
         );
         _;
@@ -136,7 +142,7 @@ contract Marketplace is Ownable{
         userAccounts[user].uuid = uuid;
     }
 
-    function registerShop(address seller) 
+    function registerShop(address seller, string calldata info)
         onlyOwner 
         nonZeroAddress(seller)
         hasRegistered(seller)
@@ -144,7 +150,11 @@ contract Marketplace is Ownable{
         external 
     {
         listAdd(seller);
-        sellerData[seller] = new Shop(seller);
+        sellerData[seller] = Info({
+            seller: seller,
+            instance: new Shop(seller),
+            info: info
+        });
     }
 
     function removeShop(address seller) 
@@ -153,16 +163,17 @@ contract Marketplace is Ownable{
         shopExists(seller)
         external 
     {
-        sellerData[seller].kill();
+        sellerData[seller].instance.kill();
         listRemove(seller);
         delete sellerData[seller];
     }
 
-    function buyData(address seller, string calldata mamRoot)
+    function purchaseData(address seller, string calldata mamRoot)
         hasRegistered(msg.sender)
         nonZeroAddress(seller)
         external 
         payable 
+        returns (bytes32)
     {
         uint32 timeoutHours = 48;
 
@@ -175,9 +186,11 @@ contract Marketplace is Ownable{
         );
 
         // imform seller
-        sellerData[seller].purchase(seller, mamRoot, msg.value, scriptHash);
+        sellerData[seller].instance.purchase(msg.sender, mamRoot, msg.value, scriptHash);
 
         emit Funded(scriptHash, msg.sender, msg.value);
+
+        return scriptHash;
     }
 
     function subscribeShop(address seller, uint256 time) 
@@ -195,7 +208,7 @@ contract Marketplace is Ownable{
             msg.value
         );
 
-        sellerData[seller].subscribe(msg.sender, time, msg.value);
+        sellerData[seller].instance.subscribe(msg.sender, time, msg.value);
         transactions[scriptHash].status = Status.FULFILLED;
     }
 
@@ -213,7 +226,7 @@ contract Marketplace is Ownable{
             0
         );
 
-        sellerData[seller].getSubscribedData(msg.sender, mamRoot, scriptHash);
+        sellerData[seller].instance.getSubscribedData(msg.sender, mamRoot, scriptHash);
 
         emit Funded(scriptHash, msg.sender, 0);
     }
@@ -351,6 +364,7 @@ contract Marketplace is Ownable{
         // TypeError: Data location must be "calldata" for parameter in external function, but "memory" was given.
         public 
     {
+        require(transactions[scriptHash].value == amount);
 
         _verifyTransaction(
             sigV,
@@ -363,10 +377,13 @@ contract Marketplace is Ownable{
 
         transactions[scriptHash].status = Status.RELEASED;
         transactions[scriptHash].lastModified = block.timestamp;
-        require(
-            _transferFunds(scriptHash, destination, amount) == transactions[scriptHash].value,
-            "Total value to be released must be equal to the transaction value"
-        );
+
+        if (amount > 0) {
+            require(
+                _transferFunds(scriptHash, destination, amount) == transactions[scriptHash].value,
+                "Total value to be released must be equal to the transaction value"
+            );
+        }
 
         emit Executed(scriptHash, destination, amount);
     }

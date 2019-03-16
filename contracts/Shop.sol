@@ -9,10 +9,21 @@ contract Shop is Ownable {
     using SafeMath for uint256;
 
     struct data {
-      string mamRoot;
-      uint256 time;
-      bool valid;
+        string mamRoot;
+        string metadata;
+        uint256 time;
     }
+
+    struct dataInfo {
+        uint256 time;
+        bool valid;
+    }
+
+    struct timePeriod {
+        uint256 start;
+        uint256 end;
+    }
+
 
     address public supervisor;
     uint256 public singlePurchasePrice = 30 wei;
@@ -20,28 +31,37 @@ contract Shop is Ownable {
     uint256 public timeUnit = 1 hours;
     bool public openForPurchase = false;
 
+    /* TODO: make it a linked list */
     data[] public dataList;
-    mapping (address => uint256) private subscribedUserList;
+
+    /* TypeError: Dynamically-sized keys for public mappings are not supported */
+    mapping (string => dataInfo)    private dataAvailability;
+    mapping (address => timePeriod) private subscriptionList;
 
     modifier supervised {
         assert(msg.sender == supervisor);
         _;
     }
 
-    modifier subscribed(address account) {
-        assert(subscribedUserList[account] != 0);
-        _;
-    }
-
-    modifier subscriptionValid {
-        assert(block.timestamp <= subscribedUserList[msg.sender]);
+    modifier subscriptionValid(address account) {
+        require(
+            subscriptionList[account].start != 0 &&
+            subscriptionList[account].end >= block.timestamp,
+            "Subscription invalid"
+        );
         _;
     }
 
     modifier isPurchasable {
-        require(openForPurchase == true);
+        require(openForPurchase);
         _;
     }
+
+    modifier isDataExist(string memory mamRoot) {
+        require(dataAvailability[mamRoot].valid);
+        _;
+    }
+
 
     event Purchase(
         bytes32 indexed scriptHash,
@@ -52,7 +72,6 @@ contract Shop is Ownable {
         address indexed buyer, 
         uint256 expirationTime
     );
-    event DataUpdate(string mamRoot);
   
     constructor (address owner) public {
         transferOwnership(owner);
@@ -73,18 +92,45 @@ contract Shop is Ownable {
         openForPurchase = false;
     }
     
-    function setPrice(uint256 _price) onlyOwner public {
-        singlePurchasePrice = _price;
+    function setPrice(uint256 price) onlyOwner public {
+        singlePurchasePrice = price;
+    }
+
+    function getDataListSize() public view returns (uint256) {
+        return dataList.length;
+    }
+
+    function getDataAvailability(string memory mamRoot) 
+        public 
+        view 
+        returns (bool) 
+    {
+        return dataAvailability[mamRoot].valid;
     }
     
-    function updateData(string memory mamRoot, uint256 time) onlyOwner public {
+    function updateData(
+        string memory mamRoot, 
+        string memory metadata
+    ) 
+        onlyOwner 
+        public 
+    {
         require(bytes(mamRoot).length == 81);
-        dataList.push(data({mamRoot: mamRoot, time: time, valid: true}));
-        emit DataUpdate(mamRoot);
+
+        dataList.push(
+            data({
+                mamRoot: mamRoot, 
+                metadata: metadata,
+                time: block.timestamp
+            })
+        );
+
+        dataAvailability[mamRoot].time = block.timestamp;
+        dataAvailability[mamRoot].valid = true;
     }
     
-    function getData(uint256 idx) public view returns (string memory, uint256) {
-        return (dataList[idx].mamRoot, dataList[idx].time);
+    function getData(uint256 idx) public view returns (string memory, string memory) {
+        return (dataList[idx].mamRoot, dataList[idx].metadata);
     }
 
     function purchase(
@@ -95,6 +141,7 @@ contract Shop is Ownable {
     ) 
         supervised 
         isPurchasable
+        isDataExist(mamRoot)
         public 
     {
         require(
@@ -115,13 +162,13 @@ contract Shop is Ownable {
         public 
     {
       uint256 totalPayAmount = subscribePerTimePrice.mul(timeInHours);
-      uint256 totalTime = timeInHours.mul(3600);
+      uint256 totalTime = timeInHours.mul(timeUnit);
       require(amount == totalPayAmount);
 
-      subscribedUserList[buyer] = block.timestamp;
-      subscribedUserList[buyer] = subscribedUserList[buyer].add(totalTime);
+      subscriptionList[buyer].start = block.timestamp;
+      subscriptionList[buyer].end = subscriptionList[buyer].start.add(totalTime);
       
-      emit Subscribe(buyer, subscribedUserList[buyer]);
+      emit Subscribe(buyer, subscriptionList[buyer].end);
     }
 
     function getSubscribedData(
@@ -129,12 +176,18 @@ contract Shop is Ownable {
         string memory mamRoot,
         bytes32 scriptHash
     )
-        subscribed(buyer)
-        subscriptionValid 
+        subscriptionValid(buyer)
         isPurchasable
+        isDataExist(mamRoot)
         public 
     {
-      emit Purchase(scriptHash, buyer, mamRoot);
+        require(
+            subscriptionList[buyer].start <= dataAvailability[mamRoot].time &&
+            subscriptionList[buyer].end   >= dataAvailability[mamRoot].time,
+            "Data not available for this subscription"
+        );
+
+        emit Purchase(scriptHash, buyer, mamRoot);
     }
     
     function txFinalize(
