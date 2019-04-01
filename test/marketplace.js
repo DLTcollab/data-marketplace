@@ -14,6 +14,7 @@ const mamRoot = 'DVZAPMBOOJHQKFQUUYCXKA9DMOLQABGKHSZCAPYLPQSQK9BGNGMOY9JHHNRRGNH
 const mamRoot2 = 'PRMLL9QRDZAYUBFDIZHLHSER99OCFZLBPHHSOZMALTWDCCZUFKQFQMQDDVYLQTRPHKLFSUPWMECMIETIU'
 const txHash = '0x1da44b586eb0729ff70a73c326926f6ed5a25f5b056e7f47fbc6e58d86871655'
 const singlePurchasePrice = 50
+const subscribePerTimePrice = 100
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -102,7 +103,8 @@ contract('Marketplace', accounts => {
   })
 
   it('Setup shop for customers', async () => {
-    await shop_instance.setPrice(singlePurchasePrice, {from: accounts[2]})
+    await shop_instance.setSinglePurchasePrice(singlePurchasePrice, {from: accounts[2]})
+    await shop_instance.setSubscribePrice(subscribePerTimePrice, {from: accounts[2]})
     let price = await shop_instance.singlePurchasePrice.call()
     assert.equal(
       price,

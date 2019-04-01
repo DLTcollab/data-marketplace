@@ -4,6 +4,10 @@ import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 import "./Marketplace.sol";
 
+/**
+*@dev A interface for shop holder to set product information and prices
+* in data marketplace
+*/
 contract Shop is Ownable {
 
     using SafeMath for uint256;
@@ -26,15 +30,14 @@ contract Shop is Ownable {
 
 
     address public supervisor;
-    uint256 public singlePurchasePrice = 30 wei;
-    uint256 public subscribePerTimePrice = 100 wei;
+    uint256 public singlePurchasePrice;
+    uint256 public subscribePerTimePrice;
     uint256 public timeUnit = 1 hours;
-    bool public openForPurchase = false;
+    bool    public openForPurchase = false;
 
     /* TODO: make it a linked list */
     data[] public dataList;
 
-    /* TypeError: Dynamically-sized keys for public mappings are not supported */
     mapping (string => dataInfo)    private dataAvailability;
     mapping (address => timePeriod) private subscriptionList;
 
@@ -78,6 +81,9 @@ contract Shop is Ownable {
         supervisor = msg.sender;
     }
 
+    /**
+    *@dev Enable buyer to purchase data from shop
+    */
     function setPurchaseOpen() 
         onlyOwner 
         external
@@ -85,6 +91,9 @@ contract Shop is Ownable {
         openForPurchase = true;
     }
 
+    /**
+    *@dev Disable buyer to purchase data from shop
+    */
     function setPurchaseClose() 
         onlyOwner 
         external
@@ -92,15 +101,46 @@ contract Shop is Ownable {
         openForPurchase = false;
     }
     
-    function setPrice(uint256 price) onlyOwner public {
+    /**
+    *@dev Use this method to set single purchase price of the data
+    *@param price The price of data
+    */
+    function setSinglePurchasePrice(
+        uint256 price
+    ) 
+        onlyOwner 
+        public 
+    {
         singlePurchasePrice = price;
     }
 
-    function getDataListSize() public view returns (uint256) {
+    /**
+    *@dev Use this method to set subscribe per time unit price of the data
+    *@param price The price of subscribe per time unit
+    */
+    function setSubscribePrice(
+        uint256 price
+    ) 
+        onlyOwner 
+        public 
+    {
+        subscribePerTimePrice = price;
+    }
+
+    /**
+    *@dev An api for user to get dataList size, since user cannot get it directly
+    */
+    function getDataListSize() 
+        public 
+        view 
+        returns (uint256) 
+    {
         return dataList.length;
     }
 
-    function getDataAvailability(string memory mamRoot) 
+    function getDataAvailability(
+        string memory mamRoot
+    ) 
         public 
         view 
         returns (bool) 
@@ -108,6 +148,26 @@ contract Shop is Ownable {
         return dataAvailability[mamRoot].valid;
     }
     
+    /**
+    *@dev Shop holder can use this method to set the availability of data
+    *@param mamRoot The specified data root 
+    *@param isValid The availability of data
+    */
+    function setDataAvailability(
+        string memory mamRoot,
+        bool isValid
+    ) 
+        onlyOwner
+        public 
+    {
+        dataAvailability[mamRoot].valid = isValid;
+    }
+
+    /**
+    *@dev Shop holder can use this method to add new data onto their shop
+    *@param mamRoot The specified data root 
+    *@param metadata The metadata of the data
+    */
     function updateData(
         string memory mamRoot, 
         string memory metadata
@@ -129,10 +189,23 @@ contract Shop is Ownable {
         dataAvailability[mamRoot].valid = true;
     }
     
-    function getData(uint256 idx) public view returns (string memory, string memory) {
-        return (dataList[idx].mamRoot, dataList[idx].metadata);
+    /**
+    *@dev Method used to get metadata in data list
+    *@param index The index of data in the dataList
+    */
+    function getData(
+        uint256 index
+    ) 
+        public 
+        view 
+        returns (string memory, string memory) 
+    {
+        return (dataList[index].mamRoot, dataList[index].metadata);
     }
 
+    /**
+    *@dev An internel purchase function only used by supervisor
+    */
     function purchase(
         address buyer, 
         string memory mamRoot, 
@@ -152,6 +225,9 @@ contract Shop is Ownable {
         emit Purchase(scriptHash, buyer, mamRoot);
     }
     
+    /**
+    *@dev An internel subscribe function only used by supervisor
+    */
     function subscribe(
         address buyer, 
         uint256 timeInHours, 
@@ -171,11 +247,15 @@ contract Shop is Ownable {
       emit Subscribe(buyer, subscriptionList[buyer].end);
     }
 
+    /**
+    *@dev An internel function to redeem data by valid subscription
+    */
     function getSubscribedData(
         address buyer,
         string memory mamRoot,
         bytes32 scriptHash
     )
+        supervised 
         subscriptionValid(buyer)
         isPurchasable
         isDataExist(mamRoot)
@@ -189,7 +269,11 @@ contract Shop is Ownable {
 
         emit Purchase(scriptHash, buyer, mamRoot);
     }
-    
+     
+    /**
+    *@dev The method for shop holder to call after data transfer is finished,
+    * it will set transaction status to FULFILLED
+    */
     function txFinalize(
         uint8[] memory sigV,
         bytes32[] memory sigR,
@@ -211,6 +295,9 @@ contract Shop is Ownable {
         );
     }
 
+    /**
+    *@dev Internal function for supervisor to destruct the shop
+    */
     function kill() supervised public {
         address payable payAddress = address(uint160(owner()));
         selfdestruct(payAddress);

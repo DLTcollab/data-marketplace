@@ -4,23 +4,28 @@ import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
 import "./Shop.sol";
 
-
+/**
+*@dev Marketplace contract integrate with TangleID for 
+* user identification, provides a decentralized data marketplace
+* with full transaction transparency that allows data consumers
+* to place bids on auctions for high-value sensor/IoT devices to compensate for invaluable data.
+*/
 contract Marketplace is Ownable{
 
     using SafeMath for uint256;
 
-    enum Status {FUNDED, FULFILLED, RELEASED, SUSPENDED}
+    enum Status {FUNDED, FULFILLED, RELEASED, SUSPENDED, REVERTED}
 
     struct Transaction {
         uint256 value;
-        uint256 lastModified; // time txn was last modified (in seconds)
+        uint256 lastModified;
         Status  status;
         uint32  timeoutHours;
         address buyer;
         address seller;
         address moderator;
-        mapping (address => bool) isOwner; // to keep track of owners.
-        mapping (address => bool) voted; // to keep track of who all voted
+        mapping (address => bool) isOwner;
+        mapping (address => bool) voted;
         bytes32 txHash;
     }
 
@@ -130,6 +135,12 @@ contract Marketplace is Ownable{
     constructor () public {
     }
 
+    /**
+    *@dev This method is used to register user
+    *in order to use data marketplace service
+    *@param user User account address
+    *@param uuid The uuid of user on TangleID
+    */
     function registerUser(address user, string calldata uuid) 
         onlyOwner 
         nonZeroAddress(user)
@@ -142,6 +153,11 @@ contract Marketplace is Ownable{
         userAccounts[user].uuid = uuid;
     }
 
+    /**
+    *@dev This method is used to register a shop for a registered user
+    *@param seller Seller account address
+    *@param info Information about the shop
+    */
     function registerShop(address seller, string calldata info)
         onlyOwner 
         nonZeroAddress(seller)
@@ -149,7 +165,7 @@ contract Marketplace is Ownable{
         shopDoesNotExist(seller)
         external 
     {
-        listAdd(seller);
+        _listInsert(seller);
         sellerData[seller] = Info({
             seller: seller,
             instance: new Shop(seller),
@@ -157,6 +173,10 @@ contract Marketplace is Ownable{
         });
     }
 
+    /**
+    *@dev Remove a registered shop
+    *@param seller shop holder account address
+    */
     function removeShop(address seller) 
         onlyOwner 
         nonZeroAddress(seller)
@@ -164,10 +184,16 @@ contract Marketplace is Ownable{
         external 
     {
         sellerData[seller].instance.kill();
-        listRemove(seller);
+        _listRemove(seller);
         delete sellerData[seller];
     }
 
+    /**
+    *@dev User can use this method to initiate a transaction
+    * to purchase data
+    *@param seller shop holder account address
+    *@param mamRoot the root of a data stream user wants to purchase
+    */
     function purchaseData(address seller, string calldata mamRoot)
         hasRegistered(msg.sender)
         nonZeroAddress(seller)
@@ -175,9 +201,9 @@ contract Marketplace is Ownable{
         payable 
         returns (bytes32)
     {
-        uint32 timeoutHours = 48;
 
-        bytes32 scriptHash = addTransaction(
+        uint32 timeoutHours = 48;
+        bytes32 scriptHash = _addTransaction(
             msg.sender,
             seller,
             owner(),
@@ -193,6 +219,12 @@ contract Marketplace is Ownable{
         return scriptHash;
     }
 
+    /**
+    *@dev Use this method to subscribe a data provider
+    * for some specified timespan
+    *@param seller shop holder account address
+    *@param time subscription timespan
+    */
     function subscribeShop(address seller, uint256 time) 
         hasRegistered(msg.sender) 
         nonZeroAddress(seller)
@@ -200,7 +232,7 @@ contract Marketplace is Ownable{
         payable 
     {
         uint32 timeoutHours = 48;
-        bytes32 scriptHash = addTransaction(
+        bytes32 scriptHash = _addTransaction(
             msg.sender,
             seller,
             owner(),
@@ -212,13 +244,19 @@ contract Marketplace is Ownable{
         transactions[scriptHash].status = Status.FULFILLED;
     }
 
+    /**
+    *@dev User can use this method to redeem data stream if
+    * the subscription is valid
+    *@param seller Shop holder account address
+    *@param mamRoot the specified data stream root
+    */
     function purchaseBySubscription(address seller, string calldata mamRoot)
         hasRegistered(msg.sender) 
         nonZeroAddress(seller)
         external
     {
         uint32 timeoutHours = 48;
-        bytes32 scriptHash = addTransaction(
+        bytes32 scriptHash = _addTransaction(
             msg.sender,
             seller,
             owner(),
@@ -232,7 +270,7 @@ contract Marketplace is Ownable{
     }
 
 
-    function listRemove(address addr) internal {
+    function _listRemove(address addr) internal {
         address n = allSellers[address(0)];
         address p = address(0);
 
@@ -246,11 +284,21 @@ contract Marketplace is Ownable{
         }
     }
 
-    function listAdd(address addr) internal {
+    function _listInsert(address addr) internal {
       allSellers[addr] = allSellers[address(0)];
       allSellers[address(0)] = addr;
     }
 
+    /**
+    *@dev Callback used by Shop instance after data transfer 
+    *@param sigV array containing V component of all the signatures
+    *@param sigR array containing R component of all the signatures
+    *@param sigS array containing S component of all the signatures
+    *@param buyer the data buyer
+    *@param scriptHash script hash of the transaction
+    *@param txHash the transaction hash containing data which seller
+    * send to buyer after the purchase
+    */
     function fulfillPurchase(
         uint8[] memory sigV,
         bytes32[] memory sigR,
@@ -265,7 +313,7 @@ contract Marketplace is Ownable{
     {
         address seller = Shop(msg.sender).owner();
         require(
-            seller  == transactions[scriptHash].seller,
+            seller == transactions[scriptHash].seller,
             "Sender is not recognized as seller"
         );
 
@@ -290,7 +338,84 @@ contract Marketplace is Ownable{
         emit Fulfilled(scriptHash, buyer, txHash);
     }
 
-    function addTransaction(
+    /**
+    *@dev Method can be used by moderator to suspend a not released
+    * transaction, in situation that the received data is not correct
+    *@param buyer the data buyer
+    *@param buyer the data seller
+    *@param scriptHash script hash of the transaction
+    */
+    function suspendTransaction(
+        address buyer,
+        address seller,
+        bytes32 scriptHash
+    )
+        transactionExists(scriptHash)
+        external
+    {
+        Transaction storage t = transactions[scriptHash];
+
+        require(
+            t.moderator == msg.sender,
+            "Operation is not allowed"
+        );
+
+        require(
+            t.buyer == buyer && t.seller == seller,
+            "Buyer or seller does not match with transaction"
+        );
+
+        require(
+            t.status != Status.RELEASED,
+            "Released transaction is not suspendable"
+        );
+
+        t.status = Status.SUSPENDED;
+    }
+
+    /**
+    *@dev Method can be used by supervisor to revert a suspended
+    * transaction and send the fund back to buyer
+    *@param buyer the data buyer
+    *@param buyer the data seller
+    *@param scriptHash script hash of the transaction
+    */
+    function revertTransaction(
+        address payable buyer,
+        address seller,
+        bytes32 scriptHash
+    )
+        onlyOwner
+        transactionExists(scriptHash)
+        external
+    {
+        Transaction storage t = transactions[scriptHash];
+
+        require(
+            t.buyer == buyer && t.seller == seller,
+            "Buyer or seller does not match with transaction"
+        );
+
+        require(
+            t.status == Status.SUSPENDED,
+            "Cannot revert not suspended transaction"
+        );
+
+        t.status = Status.REVERTED;
+
+        _transferFunds(scriptHash, buyer, t.value);
+    }
+
+    /**
+    * @dev Private function to add new transaction in the contract
+    * @param buyer The buyer of the transaction
+    * @param seller The seller of the listing associated with the transaction
+    * @param moderator Moderator for this transaction
+    * favour by signing transaction unilaterally
+    * @param timeoutHours Timelock to lock fund 
+    * @param value Total value transferred
+    */
+    function _addTransaction(
         address buyer,
         address seller,
         address moderator,
@@ -307,7 +432,7 @@ contract Marketplace is Ownable{
         //value passed should be greater than 0
         //require(value > 0, "Value passed is 0");
 
-        bytes32 scriptHash = calculateScriptHash(
+        bytes32 scriptHash = _calculateScriptHash(
             buyer,
             seller,
             moderator,
@@ -348,7 +473,16 @@ contract Marketplace is Ownable{
         return scriptHash;
     }
 
-
+    /**
+    *@dev This method will be used to release funds associated with
+    * the transaction
+    *@param sigV array containing V component of all the signatures
+    *@param sigR array containing R component of all the signatures
+    *@param sigS array containing S component of all the signatures
+    *@param scriptHash script hash of the transaction
+    *@param destination address who will receive funds
+    *@param amounts amount released to destination
+    */
     function execute(
         uint8[] memory sigV,
         bytes32[] memory sigR,
@@ -388,6 +522,9 @@ contract Marketplace is Ownable{
         emit Executed(scriptHash, destination, amount);
     }
 
+    /**
+    *@dev Internal method used to verify transaction
+    */
     function _verifyTransaction(
         uint8[] memory sigV,
         bytes32[] memory sigR,
@@ -403,6 +540,16 @@ contract Marketplace is Ownable{
             "Seller did not sign"
         );
 
+        // timeLock is used for locking fund from seller
+        bool timeLockExpired = _isTimeLockExpired(
+            transactions[scriptHash].timeoutHours,
+            transactions[scriptHash].lastModified
+        );
+
+        if (timeLockExpired) {
+            return;
+        }
+
         _verifySignatures(
             sigV,
             sigR,
@@ -412,13 +559,11 @@ contract Marketplace is Ownable{
             amount
         );
 
-        // not used now, may use to promote buyer executing contract
-        bool timeLockExpired = _isTimeLockExpired(
-            transactions[scriptHash].timeoutHours,
-            transactions[scriptHash].lastModified
-        );
     }
 
+    /**
+    *@dev Internal method used to verify signatures
+    */
     function _verifySignatures(
         uint8[] memory sigV,
         bytes32[] memory sigR,
@@ -468,6 +613,10 @@ contract Marketplace is Ownable{
         }
     }
 
+    /**
+    *@dev Internal method used to determine is transaction
+    * time lock expired
+    */
     function _isTimeLockExpired(
         uint32 timeoutHours,
         uint256 lastModified
@@ -511,7 +660,7 @@ contract Marketplace is Ownable{
         return valueTransferred;
     }
 
-    function calculateScriptHash(
+    function _calculateScriptHash(
         address buyer,
         address seller,
         address moderator,
